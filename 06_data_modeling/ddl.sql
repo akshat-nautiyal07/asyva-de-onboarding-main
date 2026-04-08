@@ -1,0 +1,1 @@
+-- Add DDL for fact and dimension tables

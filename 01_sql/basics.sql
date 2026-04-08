@@ -1,0 +1,2 @@
+-- basics.sql
+-- Add your queries here
