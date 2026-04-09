@@ -1,7 +1,7 @@
 -- basics.sql
 -- Add your queries here
 
-## Online SQL Compiler
+--## Online SQL Compiler
   SELECT * FROM Customers;
   SELECT first_name, last_name, age FROM Customers;
   
@@ -52,7 +52,7 @@
   UNION ALL
   SELECT employee_name FROM Employees;
 
-## W3 Schools
+--## W3 Schools
 
   SELECT DISTINCT Unit FROM Products;
 
@@ -76,7 +76,7 @@
   ORDER BY ProductName ASC;
 
 
-## CTE 
+--## CTE 
 
   WITH completeRecord AS (
   SELECT e.employee_id,e.employee_name,e.employee_salary
@@ -106,12 +106,16 @@
   LIMIT 1 OFFSET 1;
   -- we can also use sub quries in this case
 
-## Window Functions
+--## Window Functions
 
-  # Ranking window functions
+ -- # Ranking window functions
   
     SELECT name, salary,
     RANK() OVER (ORDER BY salary DESC) as rank,
     ROW_NUMBER() OVER (ORDER BY salary DESC) as row_number,
     DENSE_RANK() OVER (ORDER BY salary DESC) as dense
     FROM Employees;
+
+
+--** Window functions vs Group By
+--    * The main difference between these two is that the group by collapse all the row like the each unique value have only one row where as the window function reatin all the rows.
