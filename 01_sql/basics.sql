@@ -116,6 +116,15 @@
     DENSE_RANK() OVER (ORDER BY salary DESC) as dense
     FROM Employees;
 
+-- Count the null values 
+  SELECT attribute_name, COUNT(*)
+  FROM table_name
+  GROUP BY 1
+  ORDER BY 1;
+
+-- or if we only need the number of null values then we can do
+  COUNT(*) - COUNT(attribute_name)
+
 
 --** Window functions vs Group By
 --    * The main difference between these two is that the group by collapse all the row like the each unique value have only one row where as the window function reatin all the rows.
