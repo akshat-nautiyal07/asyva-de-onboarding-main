@@ -84,3 +84,34 @@ FOR i IN 1..6 LOOP
 DBMS_OUTPUT.PUT_LINE('Current value of i is: ' || i);
 END LOOP;
 END;
+
+
+
+
+CREATE TABLE Employees (
+  e_id     NUMBER PRIMARY KEY,
+  e_name   VARCHAR2(50),
+  salary   NUMBER,
+  dept     VARCHAR2(30)
+);
+
+INSERT INTO Employees VALUES (1, 'Akshat', 3000, 'IT');
+INSERT INTO Employees VALUES (2, 'Kumar', 4500, 'HR');
+INSERT INTO Employees VALUES (3, 'Nautiyal', 5000, 'IT');
+INSERT INTO Employees VALUES (4, 'John', 2500, 'Finance');
+INSERT INTO Employees VALUES (5, 'Emma', 6000, 'IT');
+
+
+DECLARE
+  CURSOR emp_cursor is
+    SELECT  e_name from Employees;
+  v_name Employees.e_name%TYPE;
+BEGIN
+    OPEN emp_cursor;
+    LOOP
+    FETCH emp_cursor INTO v_name;
+    EXIT WHEN emp_cursor%NOTFOUND;
+    DBMS_OUTPUT.PUT_LINE(v_name);
+    END LOOP;
+    CLOSE emp_cursor;
+END;
