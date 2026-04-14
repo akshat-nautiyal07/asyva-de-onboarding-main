@@ -38,11 +38,11 @@ Explain with examples:
 
 ### C) HTTP Methods  
 
-- GET (retrieve data)  
-- POST (create data)  
-- PUT (update data)  
-- PATCH (partial update)  
-- DELETE (remove data)  
+- GET
+- POST  
+- PUT  
+- PATCH
+- DELETE 
 
 ---
 
@@ -89,8 +89,6 @@ Understand and document:
 ---
 
 ## 🚀 Outcome  
-
-After completing this assignment, you should be able to:  
 
 - Work with real-world APIs  
 - Build API-based data ingestion pipelines  
