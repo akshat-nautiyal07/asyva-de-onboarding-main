@@ -1,9 +1,6 @@
-from main import orders
-from pydantic import InstanceOf
 import os
 import requests
 from sqlalchemy import create_engine, text
-from typing import Any
 
 API_BASE_URL = os.environ.get("API_BASE_URL", "http://127.0.0.1:8000").rstrip("/")
 DATABASE_URL = os.environ.get("DATABASE_URL")
@@ -32,7 +29,7 @@ def create_table():
             text("""
     CREATE TABLE IF NOT EXISTS users(
       id INTEGER PRIMARY KEY,
-      name TEXT NOT NULL,
+      name TEXT,
       age INTEGER,
       city TEXT,
       email TEXT UNIQUE
@@ -44,7 +41,7 @@ def create_table():
             text("""
     CREATE TABLE IF NOT EXISTS products(
       id INTEGER PRIMARY KEY,
-      name TEXT NOT NULL,
+      name TEXT,
       price INTEGER,
       category TEXT,
       stock INTEGER
@@ -64,6 +61,8 @@ def create_table():
     )
     """)
         )
+        conn.execute(text("ALTER TABLE users ALTER COLUMN name DROP NOT NULL"))
+        conn.execute(text("ALTER TABLE products ALTER COLUMN name DROP NOT NULL"))
 
 
 def ingest_users(users):
