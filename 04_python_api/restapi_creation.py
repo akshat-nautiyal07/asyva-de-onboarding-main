@@ -1403,7 +1403,7 @@ orders = [
 
 @app.get("/")
 async def root():
-    return {"message": "Hello, World!"}
+    return {"message": "Hello from server checking whether api is sending the response."}
 
 
 @app.get("/users")
