@@ -80,8 +80,7 @@ Explain with examples:
 
 ## 📚 Practice Links  
 
-- JSONPlaceholder: https://jsonplaceholder.typicode.com/  
-- Public APIs List: https://publicapis.dev/  
+- JSONPlaceholder: https://jsonplaceholder.typicode.com/   
 
 ---
 
