@@ -72,7 +72,8 @@ Explain with examples:
 
 ### G) Data Validation  
 
-- Schema validation (check required fields)  
+- Schema validation (check required fields)
+- Dimensions of Data Quality
 - Null value handling  
 - Data type validation  
 
