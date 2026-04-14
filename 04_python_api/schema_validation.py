@@ -1,42 +1,36 @@
-"""Validate schema and write curated output."""
-
-
 """
-ETL Pipeline: Source DB → Validate → Clean DB
-=============================================
-Tables: users, products, orders
-Steps:
-  1. Define ORM models for both source & destination DBs
-  2. Query source DB → load into plain Python lists
-  3. Validate each record → collect clean + rejected rows
-  4. Bulk-insert clean records into destination DB
+ETL Pipeline with Pydantic Validation
+======================================
+Tables : users, products, orders
+Flow   : Source DB → SQLAlchemy query → Python list
+         → Pydantic validation → clean list
+         → Insert into destination DB
 """
 
-from sqlalchemy import (
-    create_engine, Column, Integer, String, Float,
-    Enum as SAEnum, text
-)
-from sqlalchemy.orm import DeclarativeBase, Session
+from __future__ import annotations
+
+import re
 from dataclasses import dataclass, field
 from typing import Optional
-import re
-import enum
+
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
+
+from sqlalchemy import Column, Float, Integer, String, create_engine
+from sqlalchemy.orm import DeclarativeBase, Session
 
 # ─────────────────────────────────────────────
 # 0.  ENGINE SETUP
 # ─────────────────────────────────────────────
 
-# Source DB  (read-only; contains dirty data)
-SOURCE_DB_URL = "sqlite:///source.db"          # change to your actual URL
-# Destination DB (receives only clean data)
-DEST_DB_URL   = "sqlite:///clean.db"           # change to your actual URL
+SOURCE_DB_URL = "sqlite:///source.db"   # ← your source DB
+DEST_DB_URL   = "sqlite:///clean.db"    # ← your destination DB
 
 source_engine = create_engine(SOURCE_DB_URL, echo=False)
 dest_engine   = create_engine(DEST_DB_URL,   echo=False)
 
 
 # ─────────────────────────────────────────────
-# 1.  ORM MODELS
+# 1.  SQLALCHEMY ORM MODELS
 # ─────────────────────────────────────────────
 
 class SourceBase(DeclarativeBase):
@@ -46,7 +40,7 @@ class DestBase(DeclarativeBase):
     pass
 
 
-# ── Source models (mirrors the raw DB; nulls allowed) ──
+# ── Source models (raw / nullable) ──────────
 
 class SrcUser(SourceBase):
     __tablename__ = "users"
@@ -74,7 +68,7 @@ class SrcOrder(SourceBase):
     status      = Column(String)
 
 
-# ── Destination models (NOT NULL enforced at app layer before insert) ──
+# ── Destination models (clean, NOT NULL) ─────
 
 class CleanUser(DestBase):
     __tablename__ = "users"
@@ -102,178 +96,195 @@ class CleanOrder(DestBase):
     status      = Column(String,  nullable=False)
 
 
-# Create tables in destination DB
 DestBase.metadata.create_all(dest_engine)
 
 
 # ─────────────────────────────────────────────
-# 2.  QUERY SOURCE DB → PYTHON LISTS
+# 2.  PYDANTIC SCHEMAS  (validation lives here)
+# ─────────────────────────────────────────────
+
+VALID_STATUSES = {"pending", "processing", "shipped", "delivered"}
+
+
+class UserSchema(BaseModel):
+    id   : int
+    name : str   = Field(..., min_length=1)
+    age  : int   = Field(..., gt=0, lt=120)
+    city : str   = Field(..., min_length=1)
+    email: EmailStr                             # built-in format + MX check
+
+    @field_validator("name", "city", mode="before")
+    @classmethod
+    def strip_and_reject_blank(cls, v: object) -> str:
+        if v is None or str(v).strip() == "":
+            raise ValueError("field must not be null or blank")
+        return str(v).strip()
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def normalise_email(cls, v: object) -> str:
+        if v is None:
+            raise ValueError("email must not be null")
+        return str(v).strip().lower()
+
+
+class ProductSchema(BaseModel):
+    id      : int
+    name    : str   = Field(..., min_length=1)
+    price   : float = Field(..., ge=0)
+    category: str   = Field(..., min_length=1)
+    stock   : int   = Field(..., ge=0)
+
+    @field_validator("name", "category", mode="before")
+    @classmethod
+    def strip_and_reject_blank(cls, v: object) -> str:
+        if v is None or str(v).strip() == "":
+            raise ValueError("field must not be null or blank")
+        return str(v).strip()
+
+
+class OrderSchema(BaseModel):
+    order_id   : int
+    user_id    : int
+    product    : str   = Field(..., min_length=1)
+    quantity   : int   = Field(..., gt=0)
+    total_price: float = Field(..., ge=0)
+    status     : str
+
+    @field_validator("product", mode="before")
+    @classmethod
+    def strip_and_reject_blank(cls, v: object) -> str:
+        if v is None or str(v).strip() == "":
+            raise ValueError("field must not be null or blank")
+        return str(v).strip()
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def normalise_status(cls, v: object) -> str:
+        if v is None:
+            raise ValueError("status must not be null")
+        cleaned = str(v).strip().lower()
+        if cleaned not in VALID_STATUSES:
+            raise ValueError(
+                f"invalid status {v!r}; must be one of {VALID_STATUSES}"
+            )
+        return cleaned
+
+    @field_validator("total_price", "quantity", mode="before")
+    @classmethod
+    def reject_none_numeric(cls, v: object) -> object:
+        if v is None:
+            raise ValueError("field must not be null")
+        return v
+
+
+# ─────────────────────────────────────────────
+# 3.  QUERY SOURCE DB → PYTHON LISTS
 # ─────────────────────────────────────────────
 
 def fetch_all_source_data() -> tuple[list, list, list]:
-    """
-    Returns three lists of raw ORM objects:
-      (users, products, orders)
-    """
     with Session(source_engine) as session:
         users    = session.query(SrcUser).all()
         products = session.query(SrcProduct).all()
         orders   = session.query(SrcOrder).all()
-
-        # Detach from session so objects can be used outside
-        # (expunge_all keeps attribute access working)
         session.expunge_all()
-
     return users, products, orders
 
 
 # ─────────────────────────────────────────────
-# 3.  VALIDATION HELPERS
+# 4.  VALIDATE WITH PYDANTIC
 # ─────────────────────────────────────────────
-
-EMAIL_RE = re.compile(r"^[\w\.\+\-]+@[\w\-]+\.[a-zA-Z]{2,}$")
-
-VALID_ORDER_STATUSES = {"pending", "processing", "shipped", "delivered"}
-
 
 @dataclass
 class ValidationResult:
-    clean_users:    list = field(default_factory=list)
-    clean_products: list = field(default_factory=list)
-    clean_orders:   list = field(default_factory=list)
+    clean_users:    list[UserSchema]    = field(default_factory=list)
+    clean_products: list[ProductSchema] = field(default_factory=list)
+    clean_orders:   list[OrderSchema]   = field(default_factory=list)
 
-    rejected_users:    list = field(default_factory=list)   # (record, [reasons])
-    rejected_products: list = field(default_factory=list)
-    rejected_orders:   list = field(default_factory=list)
-
-
-def validate_user(u: SrcUser) -> list[str]:
-    """Return a list of failure reasons; empty list = valid."""
-    errors = []
-    if not u.name or not str(u.name).strip():
-        errors.append("name is null/empty")
-    if u.age is None:
-        errors.append("age is null")
-    elif not (0 < u.age < 120):
-        errors.append(f"age out of range: {u.age}")
-    if not u.city or not str(u.city).strip():
-        errors.append("city is null/empty")
-    if not u.email or not EMAIL_RE.match(str(u.email)):
-        errors.append(f"invalid email: {u.email!r}")
-    return errors
+    rejected_users:    list[tuple] = field(default_factory=list)  # (raw_obj, errors_str)
+    rejected_products: list[tuple] = field(default_factory=list)
+    rejected_orders:   list[tuple] = field(default_factory=list)
 
 
-def validate_product(p: SrcProduct) -> list[str]:
-    errors = []
-    if not p.name or not str(p.name).strip():
-        errors.append("name is null/empty")
-    if p.price is None:
-        errors.append("price is null")
-    elif p.price < 0:
-        errors.append(f"negative price: {p.price}")
-    if not p.category or not str(p.category).strip():
-        errors.append("category is null/empty")
-    if p.stock is None:
-        errors.append("stock is null")
-    elif p.stock < 0:
-        errors.append(f"negative stock: {p.stock}")
-    return errors
-
-
-def validate_order(o: SrcOrder) -> list[str]:
-    errors = []
-    if not o.product or not str(o.product).strip():
-        errors.append("product is null/empty")
-    if o.quantity is None:
-        errors.append("quantity is null")
-    elif o.quantity <= 0:
-        errors.append(f"quantity must be > 0: {o.quantity}")
-    if o.total_price is None:
-        errors.append("total_price is null")
-    elif o.total_price < 0:
-        errors.append(f"negative total_price: {o.total_price}")
-    if not o.status or str(o.status).lower() not in VALID_ORDER_STATUSES:
-        errors.append(f"invalid status: {o.status!r}")
-    return errors
+def _orm_to_dict(obj) -> dict:
+    """Convert a SQLAlchemy ORM row to a plain dict (skip internal keys)."""
+    return {
+        k: v for k, v in obj.__dict__.items()
+        if not k.startswith("_")
+    }
 
 
 def run_validation(
-    users: list[SrcUser],
+    users:    list[SrcUser],
     products: list[SrcProduct],
-    orders: list[SrcOrder],
+    orders:   list[SrcOrder],
 ) -> ValidationResult:
+    from pydantic import ValidationError
 
     result = ValidationResult()
 
+    # ── Users ──
     for u in users:
-        errors = validate_user(u)
-        if errors:
+        try:
+            result.clean_users.append(UserSchema(**_orm_to_dict(u)))
+        except ValidationError as e:
+            errors = "; ".join(
+                f"{err['loc'][0]}: {err['msg']}" for err in e.errors()
+            )
             result.rejected_users.append((u, errors))
-        else:
-            result.clean_users.append(u)
 
+    # ── Products ──
     for p in products:
-        errors = validate_product(p)
-        if errors:
+        try:
+            result.clean_products.append(ProductSchema(**_orm_to_dict(p)))
+        except ValidationError as e:
+            errors = "; ".join(
+                f"{err['loc'][0]}: {err['msg']}" for err in e.errors()
+            )
             result.rejected_products.append((p, errors))
-        else:
-            result.clean_products.append(p)
 
+    # ── Orders ──
     for o in orders:
-        errors = validate_order(o)
-        if errors:
+        try:
+            result.clean_orders.append(OrderSchema(**_orm_to_dict(o)))
+        except ValidationError as e:
+            errors = "; ".join(
+                f"{err['loc'][0]}: {err['msg']}" for err in e.errors()
+            )
             result.rejected_orders.append((o, errors))
-        else:
-            result.clean_orders.append(o)
 
     return result
 
 
 # ─────────────────────────────────────────────
-# 4.  INSERT CLEAN DATA INTO DESTINATION DB
+# 5.  INSERT CLEAN DATA INTO DESTINATION DB
 # ─────────────────────────────────────────────
 
-def insert_clean_data(result: ValidationResult) -> dict:
-    """
-    Bulk-insert clean records into the destination DB.
-    Returns a summary dict with counts.
-    """
-    inserted = {"users": 0, "products": 0, "orders": 0}
+def insert_clean_data(result: ValidationResult) -> dict[str, int]:
+    inserted: dict[str, int] = {"users": 0, "products": 0, "orders": 0}
 
     with Session(dest_engine) as session:
-        # ── Users ──
+
         for u in result.clean_users:
-            session.merge(                          # merge = upsert by PK
-                CleanUser(
-                    id=u.id, name=u.name.strip(),
-                    age=u.age, city=u.city.strip(),
-                    email=u.email.strip().lower(),
-                )
-            )
+            session.merge(CleanUser(
+                id=u.id, name=u.name, age=u.age,
+                city=u.city, email=u.email,
+            ))
         inserted["users"] = len(result.clean_users)
 
-        # ── Products ──
         for p in result.clean_products:
-            session.merge(
-                CleanProduct(
-                    id=p.id, name=p.name.strip(),
-                    price=float(p.price), category=p.category.strip(),
-                    stock=int(p.stock),
-                )
-            )
+            session.merge(CleanProduct(
+                id=p.id, name=p.name, price=p.price,
+                category=p.category, stock=p.stock,
+            ))
         inserted["products"] = len(result.clean_products)
 
-        # ── Orders ──
         for o in result.clean_orders:
-            session.merge(
-                CleanOrder(
-                    order_id=o.order_id, user_id=o.user_id,
-                    product=o.product.strip(),
-                    quantity=int(o.quantity),
-                    total_price=float(o.total_price),
-                    status=str(o.status).lower().strip(),
-                )
-            )
+            session.merge(CleanOrder(
+                order_id=o.order_id, user_id=o.user_id,
+                product=o.product, quantity=o.quantity,
+                total_price=o.total_price, status=o.status,
+            ))
         inserted["orders"] = len(result.clean_orders)
 
         session.commit()
@@ -282,42 +293,42 @@ def insert_clean_data(result: ValidationResult) -> dict:
 
 
 # ─────────────────────────────────────────────
-# 5.  REPORTING
+# 6.  REPORT
 # ─────────────────────────────────────────────
 
-def print_report(result: ValidationResult, inserted: dict) -> None:
+def print_report(result: ValidationResult, inserted: dict[str, int]) -> None:
     total_u = len(result.clean_users)    + len(result.rejected_users)
     total_p = len(result.clean_products) + len(result.rejected_products)
     total_o = len(result.clean_orders)   + len(result.rejected_orders)
 
-    print("\n" + "═" * 55)
-    print("  ETL PIPELINE REPORT")
-    print("═" * 55)
+    print("\n" + "═" * 60)
+    print("  ETL PIPELINE REPORT  (Pydantic validation)")
+    print("═" * 60)
     print(f"{'Table':<12} {'Total':>6} {'Clean':>6} {'Rejected':>9} {'Inserted':>9}")
-    print("─" * 55)
+    print("─" * 60)
     print(f"{'Users':<12} {total_u:>6} {len(result.clean_users):>6} {len(result.rejected_users):>9} {inserted['users']:>9}")
     print(f"{'Products':<12} {total_p:>6} {len(result.clean_products):>6} {len(result.rejected_products):>9} {inserted['products']:>9}")
     print(f"{'Orders':<12} {total_o:>6} {len(result.clean_orders):>6} {len(result.rejected_orders):>9} {inserted['orders']:>9}")
-    print("═" * 55)
+    print("═" * 60)
 
     if result.rejected_users:
         print("\n🚫 Rejected Users:")
         for u, errs in result.rejected_users:
-            print(f"  id={u.id:>3} → {', '.join(errs)}")
+            print(f"  id={u.id:>3}  →  {errs}")
 
     if result.rejected_products:
         print("\n🚫 Rejected Products:")
         for p, errs in result.rejected_products:
-            print(f"  id={p.id:>3} → {', '.join(errs)}")
+            print(f"  id={p.id:>3}  →  {errs}")
 
     if result.rejected_orders:
         print("\n🚫 Rejected Orders:")
         for o, errs in result.rejected_orders:
-            print(f"  order_id={o.order_id:>3} → {', '.join(errs)}")
+            print(f"  order_id={o.order_id:>3}  →  {errs}")
 
 
 # ─────────────────────────────────────────────
-# 6.  MAIN ENTRY POINT
+# 7.  MAIN
 # ─────────────────────────────────────────────
 
 def run_pipeline() -> None:
@@ -325,7 +336,7 @@ def run_pipeline() -> None:
     users, products, orders = fetch_all_source_data()
     print(f"   Fetched {len(users)} users, {len(products)} products, {len(orders)} orders")
 
-    print("▶  Step 2: Validating records …")
+    print("▶  Step 2: Validating with Pydantic …")
     result = run_validation(users, products, orders)
 
     print("▶  Step 3: Inserting clean records into destination DB …")
