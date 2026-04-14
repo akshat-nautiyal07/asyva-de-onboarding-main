@@ -1,13 +1,12 @@
 # 🌐 04 API
 
 ## 🎯 Objective  
-Become production-ready in **API understanding, ingestion, and validation** for real-world data pipelines.
-
+ **API understanding, ingestion, and validation**
 ---
 
 ## 📌 Assignment  
 
-Use any public API (recommended options):  
+Use any public API (Example):  
 
 - JSONPlaceholder → https://jsonplaceholder.typicode.com/  
 - OpenWeather API  
@@ -21,7 +20,7 @@ Use any public API (recommended options):
 ### A) API Fundamentals  
 
 - What is an API  
-- How API works (request → response)  
+- How API works  
 - Difference between client and server  
 
 ---
@@ -48,8 +47,6 @@ Explain with examples:
 
 ### D) HTTP Status Codes  
 
-Understand and document:  
-
 - 2xx → Success (200, 201)  
 - 3xx → Redirection  
 - 4xx → Client Errors (400, 401, 404)  
@@ -67,7 +64,7 @@ Understand and document:
 
 ### F) API Ingestion  
 
-- Fetch data from API using Python (`requests`)  
+- Fetch data from API using Python 
 - Convert API response (JSON) into DataFrame  
 - Store or print the data  
 
